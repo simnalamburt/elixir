@@ -43,17 +43,61 @@ defmodule Version do
 
   Requirements also support `and` and `or` for complex conditions:
 
-      # 2.0.0 and later until 2.1.0
-      ">= 2.0.0 and < 2.1.0"
+      # 1.2.3 and later until 2.0.0
+      ">= 1.2.3 and < 2.0.0"
 
   Since the example above is such a common requirement, it can
   be expressed as:
 
-      "~> 2.0.0"
+      "^ 1.2.3"
 
-  `~>` will never include pre-release versions of its upper bound.
+  Caret requirements (`^`) allow SemVer compatible updates to a specified
+  version. An update is allowed if the new version number does not modify the
+  left-most non-zero digit in the major, minor, patch grouping. See the table
+  below for `^` requirements and their corresponding translation.
+
+  `^`           | Translation
+  :------------ | :---------------------
+  `^ 1.2.3`     | `>= 1.2.3 and < 2.0.0`
+  `^ 1.2`       | `>= 1.2.0 and < 2.0.0`
+  `^ 1`         | `>= 1.0.0 and < 2.0.0`
+  `^ 0.2.3`     | `>= 0.2.3 and < 0.3.0`
+  `^ 0.0.3`     | `>= 0.0.3 and < 0.0.4`
+  `^ 0.0`       | `>= 0.0.0 and < 0.1.0`
+  `^ 0`         | `>= 0.0.0 and < 1.0.0`
+  `^ 1.2.3-dev` | `>= 1.2.3-dev and < 2.0.0`
+
+  Although SemVer says that there is no compatibility before 1.0.0, many elixir
+  packages treat a `0.x.y` release in the same way as a `x.y.z` release: that
+  is, `x` is incremented for breaking changes, and `y` is incremented for
+  compatible changes. As such, `^` considers a `0.2.0` and `0.2.1` version to
+  be compatible.
+
+  `^` will never include pre-release versions of its upper bound.
   It can also be used to set an upper bound on only the major
-  version part. See the table below for `~>` requirements and
+  version part.
+
+  When `allow_pre: false` is set, the requirement will not match a
+  pre-release version unless the operand is a pre-release version.
+  The default is to always allow pre-releases but note that in
+  Hex `:allow_pre` is set to `false`. See the table below for examples.
+
+  Requirement    | Version     | `:allow_pre` | Matches
+  :------------- | :---------- | :----------- | :------
+  `^ 0.2.0`      | `0.2.1`     | -            | `true`
+  `^ 0.2.0`      | `0.3.0`     | -            | `false`
+  `^ 2.0.0`      | `2.1.0`     | -            | `true`
+  `^ 2.0.0`      | `3.0.0`     | -            | `false`
+  `^ 2.1.2`      | `2.1.3-dev` | `true`       | `true`
+  `^ 2.1.2`      | `2.1.3-dev` | `false`      | `false`
+  `^ 2.1-dev`    | `2.2.0-dev` | `false`      | `true`
+  `^ 2.1.2-dev`  | `2.1.3-dev` | `false`      | `true`
+  `>= 2.1.0`     | `2.2.0-dev` | `false`      | `false`
+  `>= 2.1.0-dev` | `2.2.3-dev` | `true`       | `true`
+
+  `~>` requirements allows only patch-level changes if a patch version is
+  specified on the comparator. If you do not specify a patch version, the
+  minor-level changes are allowed. See the table below for `~>` requirements and
   their corresponding translation.
 
   `~>`           | Translation
@@ -63,24 +107,6 @@ defmodule Version do
   `~> 2.1.3-dev` | `>= 2.1.3-dev and < 2.2.0`
   `~> 2.0`       | `>= 2.0.0 and < 3.0.0`
   `~> 2.1`       | `>= 2.1.0 and < 3.0.0`
-
-  When `allow_pre: false` is set, the requirement will not match a
-  pre-release version unless the operand is a pre-release version.
-  The default is to always allow pre-releases but note that in
-  Hex `:allow_pre` is set to `false`. See the table below for examples.
-
-  Requirement    | Version     | `:allow_pre` | Matches
-  :------------- | :---------- | :----------- | :------
-  `~> 2.0`       | `2.1.0`     | -            | `true`
-  `~> 2.0`       | `3.0.0`     | -            | `false`
-  `~> 2.0.0`     | `2.0.1`     | -            | `true`
-  `~> 2.0.0`     | `2.1.0`     | -            | `false`
-  `~> 2.1.2`     | `2.1.3-dev` | `true`       | `true`
-  `~> 2.1.2`     | `2.1.3-dev` | `false`      | `false`
-  `~> 2.1-dev`   | `2.2.0-dev` | `false`      | `true`
-  `~> 2.1.2-dev` | `2.1.3-dev` | `false`      | `true`
-  `>= 2.1.0`     | `2.2.0-dev` | `false`      | `false`
-  `>= 2.1.0-dev` | `2.2.3-dev` | `true`       | `true`
 
   """
 
@@ -341,6 +367,7 @@ defmodule Version do
       {">=", :>=},
       {"<=", :<=},
       {"~>", :~>},
+      {"^", :^},
       {">", :>},
       {"<", :<},
       {"==", :==},
@@ -391,15 +418,16 @@ defmodule Version do
     end
 
     @spec parse_version(String.t()) :: {:ok, Version.matchable()} | :error
-    def parse_version(string, approximate? \\ false) when is_binary(string) do
+    def parse_version(string, patch_optional? \\ false, minor_optional? \\ false)
+        when is_binary(string) do
       destructure [version_with_pre, build], String.split(string, "+", parts: 2)
       destructure [version, pre], String.split(version_with_pre, "-", parts: 2)
       destructure [major, minor, patch, next], String.split(version, ".")
 
       with nil <- next,
            {:ok, major} <- require_digits(major),
-           {:ok, minor} <- require_digits(minor),
-           {:ok, patch} <- maybe_patch(patch, approximate?),
+           {:ok, minor} <- optional_digits(minor, minor_optional?),
+           {:ok, patch} <- optional_digits(patch, patch_optional?),
            {:ok, pre_parts} <- optional_dot_separated(pre),
            {:ok, pre_parts} <- convert_parts_to_integer(pre_parts, []),
            {:ok, build_parts} <- optional_dot_separated(build) do
@@ -424,9 +452,9 @@ defmodule Version do
     defp parse_digits(<<>>, acc) when byte_size(acc) > 0, do: {:ok, String.to_integer(acc)}
     defp parse_digits(_, _acc), do: :error
 
-    defp maybe_patch(patch, approximate?)
-    defp maybe_patch(nil, true), do: {:ok, nil}
-    defp maybe_patch(patch, _), do: require_digits(patch)
+    defp optional_digits(patch, optional?)
+    defp optional_digits(nil, true), do: {:ok, nil}
+    defp optional_digits(patch, _), do: require_digits(patch)
 
     defp optional_dot_separated(nil), do: {:ok, []}
 
@@ -549,6 +577,23 @@ defmodule Version do
       }
     end
 
+    defp to_condition([:^, version | _]) do
+      from = parse_condition(version, true, true)
+
+      to =
+        case from do
+          {0, 0, patch, _} -> {0, 0, patch + 1, [0]}
+          {0, minor, _, _} -> {0, minor + 1, 0, [0]}
+          {major, _, _, _} -> {major + 1, 0, 0, [0]}
+        end
+
+      {
+        :andalso,
+        to_condition([:>=, matchable_to_string(from)]),
+        to_condition([:<, matchable_to_string(to)])
+      }
+    end
+
     defp to_condition([:>, version | _]) do
       {major, minor, patch, pre} = parse_condition(version)
 
@@ -597,8 +642,8 @@ defmodule Version do
       to_condition({:orelse, current, to_condition([operator, version])}, rest)
     end
 
-    defp parse_condition(version, approximate? \\ false) do
-      case parse_version(version, approximate?) do
+    defp parse_condition(version, patch_optional? \\ false, minor_optional? \\ false) do
+      case parse_version(version, patch_optional?, minor_optional?) do
         {:ok, {major, minor, patch, pre, _build}} -> {major, minor, patch, pre}
         :error -> throw(:invalid_matchspec)
       end
