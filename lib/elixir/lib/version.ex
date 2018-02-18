@@ -702,6 +702,7 @@ defmodule Version do
     end
 
     defp matchable_to_string({major, minor, patch, pre}) do
+      minor = if minor, do: "#{minor}", else: "0"
       patch = if patch, do: "#{patch}", else: "0"
       pre = if pre != [], do: "-#{Enum.join(pre, ".")}"
       "#{major}.#{minor}.#{patch}#{pre}"
